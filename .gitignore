@@ -1,0 +1,31 @@
+.venv/
+node_modules/
+dist/
+*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local-only secrets and data
+.env
+id.txt
+server.txt
+storage/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+*.pem
+*.key
+*.crt
+인수인계.md
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
