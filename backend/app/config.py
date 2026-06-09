@@ -15,7 +15,7 @@ class Settings:
     access_token_minutes: int = int(os.getenv("VAULT_ACCESS_TOKEN_MINUTES", "720"))
     public_base_url: str = os.getenv("VAULT_PUBLIC_BASE_URL", "http://localhost:8000")
     cors_origin: str = os.getenv("VAULT_CORS_ORIGIN", "http://localhost:5173")
-    storage_quota_bytes: int = int(os.getenv("VAULT_STORAGE_QUOTA_BYTES", str(10 * 1024 * 1024 * 1024)))
+    storage_quota_bytes: int = int(os.getenv("VAULT_STORAGE_QUOTA_BYTES", str(50 * 1024 * 1024 * 1024)))
     max_upload_bytes: int = int(os.getenv("VAULT_MAX_UPLOAD_BYTES", str(512 * 1024 * 1024)))
 
     @property
