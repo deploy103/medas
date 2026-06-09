@@ -1,6 +1,9 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+ALLOWED_SHARE_EXPIRY_HOURS = {1, 3, 5, 12, 24, 72, 120, 168, 336}
 
 
 class LoginRequest(BaseModel):
@@ -30,27 +33,62 @@ class ItemOut(BaseModel):
     updated_at: datetime | None = None
 
 
+class ShareCreateRequest(BaseModel):
+    item_ids: list[int] = Field(min_length=1, max_length=100)
+    expires_hours: int
+
+    @field_validator("item_ids")
+    @classmethod
+    def validate_item_ids(cls, value: list[int]) -> list[int]:
+        if any(item_id <= 0 for item_id in value):
+            raise ValueError("item_ids must contain positive ids")
+        return value
+
+    @field_validator("expires_hours")
+    @classmethod
+    def validate_expires_hours(cls, value: int) -> int:
+        if value not in ALLOWED_SHARE_EXPIRY_HOURS:
+            raise ValueError("unsupported share expiry")
+        return value
+
+
+class ShareFileOut(BaseModel):
+    id: int
+    item_id: int
+    title: str
+    filename: str
+    size_bytes: int
+    mime_type: str | None = None
+    uploaded_at: datetime
+    download_count: int
+    download_url: str
+
+
 class ShareOut(BaseModel):
     id: int
     token: str
     item_id: int
     share_url: str
     download_count: int
+    file_count: int
+    total_size_bytes: int
+    zip_size_bytes: int | None = None
+    download_all_url: str
+    files: list[ShareFileOut]
     created_at: datetime
     expires_at: datetime | None = None
 
 
 class PublicShareOut(BaseModel):
     token: str
-    title: str
-    filename: str
-    size_bytes: int
-    mime_type: str | None = None
-    uploaded_at: datetime
+    file_count: int
+    total_size_bytes: int
+    zip_size_bytes: int | None = None
+    files: list[ShareFileOut]
     shared_at: datetime
     expires_at: datetime | None = None
     download_count: int
-    download_url: str
+    download_all_url: str
 
 
 class StorageStatsOut(BaseModel):

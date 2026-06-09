@@ -20,21 +20,37 @@ export interface ShareLink {
   item_id: number;
   share_url: string;
   download_count: number;
+  file_count: number;
+  total_size_bytes: number;
+  zip_size_bytes: number | null;
+  download_all_url: string;
+  files: ShareFile[];
   created_at: string;
   expires_at: string | null;
 }
 
-export interface PublicShare {
-  token: string;
+export interface ShareFile {
+  id: number;
+  item_id: number;
   title: string;
   filename: string;
   size_bytes: number;
   mime_type: string | null;
   uploaded_at: string;
+  download_count: number;
+  download_url: string;
+}
+
+export interface PublicShare {
+  token: string;
+  file_count: number;
+  total_size_bytes: number;
+  zip_size_bytes: number | null;
+  files: ShareFile[];
   shared_at: string;
   expires_at: string | null;
   download_count: number;
-  download_url: string;
+  download_all_url: string;
 }
 
 export interface StorageStats {

@@ -13,6 +13,7 @@ class UploadTooLargeError(Exception):
 def ensure_storage_dirs() -> None:
     settings.storage_dir.mkdir(parents=True, exist_ok=True)
     settings.upload_dir.mkdir(parents=True, exist_ok=True)
+    settings.share_dir.mkdir(parents=True, exist_ok=True)
 
 
 async def save_upload(upload: UploadFile, max_bytes: int | None = None) -> tuple[str, str, int]:
@@ -39,9 +40,25 @@ def upload_path(stored_name: str) -> Path:
     return settings.upload_dir / stored_name
 
 
+def new_share_archive_name() -> str:
+    return f"{uuid.uuid4().hex}.zip"
+
+
+def share_archive_path(stored_name: str) -> Path:
+    return settings.share_dir / stored_name
+
+
 def delete_upload(stored_name: str | None) -> None:
     if not stored_name:
         return
     path = upload_path(stored_name)
+    if path.exists() and path.is_file():
+        path.unlink()
+
+
+def delete_share_archive(stored_name: str | None) -> None:
+    if not stored_name:
+        return
+    path = share_archive_path(stored_name)
     if path.exists() and path.is_file():
         path.unlink()

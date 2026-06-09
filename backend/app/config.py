@@ -23,6 +23,10 @@ class Settings:
         return self.storage_dir / "uploads"
 
     @property
+    def share_dir(self) -> Path:
+        return self.storage_dir / "shares"
+
+    @property
     def database_url(self) -> str:
         return os.getenv("VAULT_DATABASE_URL", f"sqlite:///{self.storage_dir / 'vault.db'}")
 

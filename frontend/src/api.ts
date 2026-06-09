@@ -88,9 +88,20 @@ export function deleteItem(token: string, id: number): Promise<void> {
   return apiFetch<void>(`/api/items/${id}`, token, { method: "DELETE" });
 }
 
-export function createShare(token: string, id: number, expiresDays: number): Promise<ShareLink> {
-  const params = new URLSearchParams({ expires_days: String(expiresDays) });
-  return apiFetch<ShareLink>(`/api/items/${id}/shares?${params.toString()}`, token, { method: "POST" });
+export function createShare(token: string, itemIds: number[], expiresHours: number): Promise<ShareLink> {
+  return apiFetch<ShareLink>("/api/shares", token, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ item_ids: itemIds, expires_hours: expiresHours })
+  });
+}
+
+export function listShares(token: string): Promise<ShareLink[]> {
+  return apiFetch<ShareLink[]>("/api/shares", token);
+}
+
+export function deleteShare(token: string, id: number): Promise<void> {
+  return apiFetch<void>(`/api/shares/${id}`, token, { method: "DELETE" });
 }
 
 export async function getPublicShare(token: string): Promise<PublicShare> {
