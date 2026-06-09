@@ -75,7 +75,7 @@ VAULT_MAX_UPLOAD_BYTES=536870912
 기본 흐름:
 
 ```bash
-git clone https://github.com/<owner>/personal-vault.git /opt/personal-vault
+git clone https://github.com/deploy103/personal-vault.git /opt/personal-vault
 cd /opt/personal-vault
 python3 -m venv .venv
 .venv/bin/python -m pip install -r backend/requirements.txt
