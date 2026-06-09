@@ -2,7 +2,7 @@
 
 These files are templates only. Do not commit real server IPs, passwords, private keys, or production `.env` files.
 
-Production environment is read from `/etc/personal-vault.env`.
+Production environment is read from `/etc/medas.env`.
 
 Required variables:
 
