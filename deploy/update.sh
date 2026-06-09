@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_DIR="${APP_DIR:-/opt/personal-vault}"
+APP_DIR="${APP_DIR:-/opt/medas}"
 
 cd "$APP_DIR"
 git pull --ff-only
@@ -13,5 +13,5 @@ cd frontend
 npm ci
 npm run build
 
-sudo systemctl restart personal-vault
+sudo systemctl restart medas
 sudo systemctl reload nginx

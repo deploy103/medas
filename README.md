@@ -75,8 +75,8 @@ VAULT_MAX_UPLOAD_BYTES=536870912
 기본 흐름:
 
 ```bash
-git clone https://github.com/deploy103/medas.git /opt/personal-vault
-cd /opt/personal-vault
+git clone https://github.com/deploy103/medas.git /opt/medas
+cd /opt/medas
 python3 -m venv .venv
 .venv/bin/python -m pip install -r backend/requirements.txt
 
@@ -85,12 +85,12 @@ npm ci
 npm run build
 ```
 
-systemd 서비스 예시는 `deploy/systemd/personal-vault.service`, Nginx 예시는 `deploy/nginx/`를 참고하세요.
+systemd 서비스 예시는 `deploy/systemd/medas.service`, Nginx 예시는 `deploy/nginx/`를 참고하세요.
 
 업데이트:
 
 ```bash
-cd /opt/personal-vault
+cd /opt/medas
 git pull --ff-only
 ./deploy/update.sh
 ```

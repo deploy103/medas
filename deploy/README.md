@@ -19,7 +19,7 @@ VAULT_MAX_UPLOAD_BYTES=536870912
 Typical update flow after cloning the public repository with HTTPS:
 
 ```bash
-cd /opt/personal-vault
+cd /opt/medas
 git pull --ff-only
 ./deploy/update.sh
 ```
