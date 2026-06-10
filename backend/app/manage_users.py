@@ -63,7 +63,7 @@ def list_users() -> int:
 
 
 def main() -> int:
-    parser = ArgumentParser(description="Manage Personal Vault users. This is not a signup flow.")
+    parser = ArgumentParser(description="Manage Medas users. This is not a signup flow.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     create_parser = subparsers.add_parser("create", help="create or update a DB user")

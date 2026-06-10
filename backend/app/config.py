@@ -8,7 +8,7 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 
 @dataclass(frozen=True)
 class Settings:
-    app_name: str = "Personal Vault"
+    app_name: str = "Medas"
     storage_dir: Path = Path(os.getenv("VAULT_STORAGE_DIR", ROOT_DIR / "storage"))
     jwt_secret: str = os.getenv("VAULT_SECRET_KEY", "change-this-local-dev-secret")
     jwt_algorithm: str = "HS256"

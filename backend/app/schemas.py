@@ -1,9 +1,21 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 
 
 ALLOWED_SHARE_EXPIRY_HOURS = {1, 3, 5, 12, 24, 72, 120, 168, 336}
+
+
+class UtcDateTimeModel(BaseModel):
+    @field_serializer("*", when_used="json")
+    def serialize_utc_datetime(self, value: object) -> object:
+        if not isinstance(value, datetime):
+            return value
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        else:
+            value = value.astimezone(UTC)
+        return value.isoformat().replace("+00:00", "Z")
 
 
 class LoginRequest(BaseModel):
@@ -17,7 +29,7 @@ class TokenResponse(BaseModel):
     username: str
 
 
-class ItemOut(BaseModel):
+class ItemOut(UtcDateTimeModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -52,7 +64,7 @@ class ShareCreateRequest(BaseModel):
         return value
 
 
-class ShareFileOut(BaseModel):
+class ShareFileOut(UtcDateTimeModel):
     id: int
     item_id: int
     title: str
@@ -64,7 +76,7 @@ class ShareFileOut(BaseModel):
     download_url: str
 
 
-class ShareOut(BaseModel):
+class ShareOut(UtcDateTimeModel):
     id: int
     token: str
     item_id: int
@@ -79,7 +91,7 @@ class ShareOut(BaseModel):
     expires_at: datetime | None = None
 
 
-class PublicShareOut(BaseModel):
+class PublicShareOut(UtcDateTimeModel):
     token: str
     file_count: int
     total_size_bytes: int

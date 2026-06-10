@@ -1,1 +1,1 @@
-"""Personal Vault backend package."""
+"""Medas backend package."""

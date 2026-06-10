@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 import secrets
 import shutil
 import re
@@ -272,7 +272,7 @@ def download_item(
 
 
 def _utc_now() -> datetime:
-    return datetime.utcnow()
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 def _cleanup_expired_share_archives(db: Session) -> None:
