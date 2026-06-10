@@ -238,6 +238,16 @@ select:focus {
   font-size: 13px;
 }
 
+.session-text {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(241, 201, 91, 0.28);
+  border-radius: var(--radius);
+  color: #ffe8a1;
+  background: rgba(241, 201, 91, 0.1);
+  font-size: 13px;
+}
+
 .app-shell {
   display: grid;
   grid-template-rows: 70px minmax(0, 1fr);

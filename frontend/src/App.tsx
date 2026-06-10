@@ -19,7 +19,7 @@ import {
   UploadCloud,
   X
 } from "lucide-react";
-import { type FormEvent, type ReactNode, useMemo, useRef, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -30,6 +30,7 @@ import {
   downloadItem,
   getPublicShare,
   getStorageStats,
+  isAuthError,
   listItems,
   listShares,
   login
@@ -38,6 +39,26 @@ import type { ItemKind, PublicShare, ShareLink, StorageStats, VaultItem } from "
 
 const TOKEN_KEY = "personal-vault-token";
 const USERNAME_KEY = "personal-vault-username";
+const LAST_ACTIVITY_KEY = "personal-vault-last-activity";
+const IDLE_TIMEOUT_MS = 60 * 60 * 1000;
+const IDLE_SESSION_MESSAGE = "1시간 동안 활동이 없어 자동 로그아웃되었습니다.";
+
+function removeStoredSession() {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(USERNAME_KEY);
+  localStorage.removeItem(LAST_ACTIVITY_KEY);
+}
+
+function hasStoredSessionTimedOut(): boolean {
+  const storedToken = localStorage.getItem(TOKEN_KEY);
+  const lastActivity = Number(localStorage.getItem(LAST_ACTIVITY_KEY));
+  return Boolean(
+    storedToken &&
+      Number.isFinite(lastActivity) &&
+      lastActivity > 0 &&
+      Date.now() - lastActivity >= IDLE_TIMEOUT_MS
+  );
+}
 
 const filters: Array<{ value: ItemKind; label: string }> = [
   { value: "all", label: "전체" },
@@ -163,8 +184,10 @@ function Modal({
 }
 
 function LoginScreen({
+  message,
   onLogin
 }: {
+  message?: string;
   onLogin: (token: string, username: string) => void;
 }) {
   const [error, setError] = useState("");
@@ -209,6 +232,7 @@ function LoginScreen({
           비밀번호
           <input name="password" type="password" autoComplete="current-password" required />
         </label>
+        {message ? <p className="session-text">{message}</p> : null}
         {error ? <p className="error-text">{error}</p> : null}
         <button className="primary-button" disabled={loginMutation.isPending}>
           {loginMutation.isPending ? "확인 중" : "로그인"}
@@ -303,8 +327,16 @@ function PublicShareScreen({ token }: { token: string }) {
 function VaultApp() {
   const queryClient = useQueryClient();
   const formRef = useRef<HTMLFormElement>(null);
-  const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY) ?? "");
-  const [username, setUsername] = useState(() => localStorage.getItem(USERNAME_KEY) ?? "");
+  const lastActivityWriteRef = useRef(0);
+  const [initialIdleExpired] = useState(() => hasStoredSessionTimedOut());
+  const [token, setToken] = useState(() => {
+    if (initialIdleExpired) {
+      removeStoredSession();
+      return "";
+    }
+    return localStorage.getItem(TOKEN_KEY) ?? "";
+  });
+  const [username, setUsername] = useState(() => (initialIdleExpired ? "" : localStorage.getItem(USERNAME_KEY) ?? ""));
   const [activeTab, setActiveTab] = useState<AppTab>("items");
   const [filter, setFilter] = useState<ItemKind>("all");
   const [query, setQuery] = useState("");
@@ -319,7 +351,9 @@ function VaultApp() {
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [isShareOpen, setIsShareOpen] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [uploadComplete, setUploadComplete] = useState(false);
   const [notice, setNotice] = useState("");
+  const [authMessage, setAuthMessage] = useState(initialIdleExpired ? IDLE_SESSION_MESSAGE : "");
 
   const itemsQuery = useQuery({
     queryKey: ["items", filter, query],
@@ -338,6 +372,70 @@ function VaultApp() {
     queryFn: () => listShares(token),
     enabled: Boolean(token)
   });
+
+  const hasAuthQueryError = [itemsQuery.error, storageQuery.error, sharesQuery.error].some(isAuthError);
+
+  useEffect(() => {
+    if (hasAuthQueryError) {
+      handleAuthExpired();
+    }
+  }, [hasAuthQueryError]);
+
+  useEffect(() => {
+    if (!token) return;
+
+    let idleTimerId: number | undefined;
+    const activityEvents = ["click", "keydown", "mousemove", "pointerdown", "scroll", "touchstart", "input"];
+
+    function readLastActivity(): number {
+      const timestamp = Number(localStorage.getItem(LAST_ACTIVITY_KEY));
+      return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : Date.now();
+    }
+
+    function expireIfIdle(): boolean {
+      const lastActivity = readLastActivity();
+      if (Date.now() - lastActivity < IDLE_TIMEOUT_MS) return false;
+      handleIdleExpired();
+      return true;
+    }
+
+    function scheduleIdleCheck() {
+      window.clearTimeout(idleTimerId);
+      const elapsed = Date.now() - readLastActivity();
+      const remaining = Math.max(IDLE_TIMEOUT_MS - elapsed, 0);
+      idleTimerId = window.setTimeout(() => {
+        if (!expireIfIdle()) {
+          scheduleIdleCheck();
+        }
+      }, remaining);
+    }
+
+    function recordActivity() {
+      if (expireIfIdle()) return;
+      const now = Date.now();
+      if (now - lastActivityWriteRef.current < 1000) return;
+      lastActivityWriteRef.current = now;
+      localStorage.setItem(LAST_ACTIVITY_KEY, String(now));
+      scheduleIdleCheck();
+    }
+
+    const savedActivity = Number(localStorage.getItem(LAST_ACTIVITY_KEY));
+    if (Number.isFinite(savedActivity) && savedActivity > 0) {
+      lastActivityWriteRef.current = savedActivity;
+    } else {
+      lastActivityWriteRef.current = Date.now();
+      localStorage.setItem(LAST_ACTIVITY_KEY, String(lastActivityWriteRef.current));
+    }
+
+    if (expireIfIdle()) return;
+    scheduleIdleCheck();
+    activityEvents.forEach((eventName) => window.addEventListener(eventName, recordActivity, { passive: true }));
+
+    return () => {
+      window.clearTimeout(idleTimerId);
+      activityEvents.forEach((eventName) => window.removeEventListener(eventName, recordActivity));
+    };
+  }, [token]);
 
   const rawItems = itemsQuery.data ?? [];
   const items = useMemo(() => sortItems(rawItems, sortKey), [rawItems, sortKey]);
@@ -369,20 +467,38 @@ function VaultApp() {
     storage && storage.quota_bytes > 0 ? Math.min(100, Math.round((storage.used_bytes / storage.quota_bytes) * 100)) : 0;
 
   const createMutation = useMutation({
-    mutationFn: (formData: FormData) => createItem(token, formData, setUploadProgress),
-    onMutate: () => {
-      setUploadProgress(0);
+    mutationFn: (formData: FormData) =>
+      createItem(token, formData, formData.get("kind") === "file" ? setUploadProgress : undefined),
+    onMutate: (formData) => {
+      setUploadProgress(formData.get("kind") === "file" ? 0 : null);
+      setUploadComplete(false);
     },
-    onSuccess: () => {
+    onSuccess: (_item, formData) => {
       formRef.current?.reset();
-      setIsUploadOpen(false);
+      if (formData.get("kind") === "file") {
+        setUploadProgress(100);
+        setUploadComplete(true);
+      } else {
+        setIsUploadOpen(false);
+        setUploadProgress(null);
+        setUploadComplete(false);
+      }
       setNotice("저장했습니다.");
       queryClient.invalidateQueries({ queryKey: ["items"] });
       queryClient.invalidateQueries({ queryKey: ["storage"] });
     },
-    onError: (err) => setNotice(err instanceof Error ? err.message : "저장 실패"),
-    onSettled: () => {
-      window.setTimeout(() => setUploadProgress(null), 900);
+    onError: (err) => {
+      setUploadComplete(false);
+      if (isAuthError(err)) {
+        handleAuthExpired();
+        return;
+      }
+      setNotice(err instanceof Error ? err.message : "저장 실패");
+    },
+    onSettled: (_data, error) => {
+      if (error) {
+        window.setTimeout(() => setUploadProgress(null), 900);
+      }
     }
   });
 
@@ -394,7 +510,13 @@ function VaultApp() {
       queryClient.invalidateQueries({ queryKey: ["storage"] });
       queryClient.invalidateQueries({ queryKey: ["shares"] });
     },
-    onError: (err) => setNotice(err instanceof Error ? err.message : "삭제 실패")
+    onError: (err) => {
+      if (isAuthError(err)) {
+        handleAuthExpired();
+        return;
+      }
+      setNotice(err instanceof Error ? err.message : "삭제 실패");
+    }
   });
 
   const shareMutation = useMutation({
@@ -413,7 +535,13 @@ function VaultApp() {
         // Clipboard permissions vary by browser and protocol.
       }
     },
-    onError: (err) => setShareError(err instanceof Error ? err.message : "공유 실패")
+    onError: (err) => {
+      if (isAuthError(err)) {
+        handleAuthExpired();
+        return;
+      }
+      setShareError(err instanceof Error ? err.message : "공유 실패");
+    }
   });
 
   const deleteShareMutation = useMutation({
@@ -423,19 +551,66 @@ function VaultApp() {
       setDetailsShare(null);
       queryClient.invalidateQueries({ queryKey: ["shares"] });
     },
-    onError: (err) => setNotice(err instanceof Error ? err.message : "공유 삭제 실패")
+    onError: (err) => {
+      if (isAuthError(err)) {
+        handleAuthExpired();
+        return;
+      }
+      setNotice(err instanceof Error ? err.message : "공유 삭제 실패");
+    }
   });
 
+  function clearSession(message = "") {
+    removeStoredSession();
+    queryClient.removeQueries({ queryKey: ["items"] });
+    queryClient.removeQueries({ queryKey: ["storage"] });
+    queryClient.removeQueries({ queryKey: ["shares"] });
+    setToken("");
+    setUsername("");
+    setSelectedFileIds([]);
+    setShareDraftIds([]);
+    setShareResult(null);
+    setShareError("");
+    setDetailsShare(null);
+    setIsUploadOpen(false);
+    setIsShareOpen(false);
+    setUploadProgress(null);
+    setUploadComplete(false);
+    setNotice("");
+    setAuthMessage(message);
+  }
+
+  function handleAuthExpired() {
+    clearSession("세션이 만료되었습니다. 다시 로그인해 주세요.");
+  }
+
+  function handleIdleExpired() {
+    clearSession(IDLE_SESSION_MESSAGE);
+  }
+
   function handleLogin(nextToken: string, nextUsername: string) {
+    const now = Date.now();
+    localStorage.setItem(LAST_ACTIVITY_KEY, String(now));
+    lastActivityWriteRef.current = now;
+    setAuthMessage("");
     setToken(nextToken);
     setUsername(nextUsername);
   }
 
   function handleLogout() {
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(USERNAME_KEY);
-    setToken("");
-    setUsername("");
+    clearSession();
+  }
+
+  function openUploadModal() {
+    setUploadProgress(null);
+    setUploadComplete(false);
+    setIsUploadOpen(true);
+  }
+
+  function closeUploadModal() {
+    setIsUploadOpen(false);
+    setUploadProgress(null);
+    setUploadComplete(false);
   }
 
   function handleCreate(event: FormEvent<HTMLFormElement>) {
@@ -453,6 +628,10 @@ function VaultApp() {
     try {
       await downloadItem(token, item);
     } catch (err) {
+      if (isAuthError(err)) {
+        handleAuthExpired();
+        return;
+      }
       setNotice(err instanceof Error ? err.message : "다운로드 실패");
     }
   }
@@ -496,7 +675,7 @@ function VaultApp() {
   }
 
   if (!token) {
-    return <LoginScreen onLogin={handleLogin} />;
+    return <LoginScreen message={authMessage} onLogin={handleLogin} />;
   }
 
   return (
@@ -529,7 +708,7 @@ function VaultApp() {
             <span>{createMutation.isPending ? "업로드 중" : "대기"}</span>
           </div>
 
-          <button className="primary-button full-button" onClick={() => setIsUploadOpen(true)} type="button">
+          <button className="primary-button full-button" onClick={openUploadModal} type="button">
             <Plus size={18} />
             파일 추가
           </button>
@@ -737,7 +916,7 @@ function VaultApp() {
       </section>
 
       {isUploadOpen ? (
-        <Modal title="자료 추가" onClose={() => setIsUploadOpen(false)}>
+        <Modal title="자료 추가" onClose={closeUploadModal}>
           <div className="kind-tabs" role="tablist" aria-label="자료 종류">
             {(["file", "link", "note"] as const).map((kind) => (
               <button
@@ -764,17 +943,23 @@ function VaultApp() {
             {draftKind === "link" ? <input name="url" placeholder="https://..." required /> : null}
             <textarea name="note" placeholder="메모" rows={draftKind === "note" ? 9 : 5} />
             <input name="tags" placeholder="태그: 문서, 학교, 서버" />
-            <button className="primary-button" disabled={createMutation.isPending}>
-              <Plus size={18} />
-              저장
+            <button className="primary-button" disabled={createMutation.isPending || uploadComplete}>
+              {uploadComplete ? <Check size={18} /> : <Plus size={18} />}
+              {uploadComplete ? "저장 완료" : createMutation.isPending ? "저장 중" : "저장"}
             </button>
             {uploadProgress !== null ? (
               <div className="upload-progress" aria-live="polite">
                 <div>
-                  <span>업로드</span>
+                  <span>{uploadComplete ? "업로드 완료" : "업로드"}</span>
                   <strong>{uploadProgress}%</strong>
                 </div>
                 <progress value={uploadProgress} max={100} />
+                {uploadComplete ? (
+                  <button className="primary-button full-button" onClick={closeUploadModal} type="button">
+                    <Check size={18} />
+                    완료
+                  </button>
+                ) : null}
               </div>
             ) : null}
           </form>

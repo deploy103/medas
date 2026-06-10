@@ -2,6 +2,21 @@ import type { ItemKind, LoginResponse, PublicShare, ShareLink, StorageStats, Vau
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
+export class ApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    Object.setPrototypeOf(this, ApiError.prototype);
+  }
+}
+
+export function isAuthError(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 401;
+}
+
 async function parseError(response: Response): Promise<string> {
   try {
     const body = await response.json();
@@ -20,7 +35,7 @@ export async function apiFetch<T>(
   headers.set("Authorization", `Bearer ${token}`);
   const response = await fetch(`${API_BASE}${path}`, { ...init, headers });
   if (!response.ok) {
-    throw new Error(await parseError(response));
+    throw new ApiError(await parseError(response), response.status);
   }
   if (response.status === 204) {
     return undefined as T;
@@ -35,7 +50,7 @@ export async function login(username: string, password: string): Promise<LoginRe
     body: JSON.stringify({ username, password })
   });
   if (!response.ok) {
-    throw new Error(await parseError(response));
+    throw new ApiError(await parseError(response), response.status);
   }
   return response.json() as Promise<LoginResponse>;
 }
@@ -73,13 +88,13 @@ export function createItem(
       }
       try {
         const body = JSON.parse(request.responseText) as { detail?: string };
-        reject(new Error(body.detail ?? request.statusText));
+        reject(new ApiError(body.detail ?? request.statusText, request.status));
       } catch {
-        reject(new Error(request.statusText || "저장 실패"));
+        reject(new ApiError(request.statusText || "저장 실패", request.status));
       }
     };
 
-    request.onerror = () => reject(new Error("네트워크 오류"));
+    request.onerror = () => reject(new ApiError("네트워크 오류", 0));
     request.send(formData);
   });
 }
@@ -107,7 +122,7 @@ export function deleteShare(token: string, id: number): Promise<void> {
 export async function getPublicShare(token: string): Promise<PublicShare> {
   const response = await fetch(`${API_BASE}/api/public/shares/${encodeURIComponent(token)}`);
   if (!response.ok) {
-    throw new Error(await parseError(response));
+    throw new ApiError(await parseError(response), response.status);
   }
   return response.json() as Promise<PublicShare>;
 }
@@ -117,7 +132,7 @@ export async function downloadItem(token: string, item: VaultItem): Promise<void
     headers: { Authorization: `Bearer ${token}` }
   });
   if (!response.ok) {
-    throw new Error(await parseError(response));
+    throw new ApiError(await parseError(response), response.status);
   }
   const blob = await response.blob();
   const objectUrl = URL.createObjectURL(blob);
