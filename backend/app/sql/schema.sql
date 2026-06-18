@@ -16,11 +16,15 @@ CREATE TABLE IF NOT EXISTS items (
   tags TEXT,
   original_filename TEXT,
   stored_filename TEXT UNIQUE,
+  parent_id INTEGER REFERENCES items(id) ON DELETE CASCADE,
+  relative_path TEXT,
   mime_type TEXT,
   size_bytes INTEGER,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX IF NOT EXISTS ix_items_parent_id ON items(parent_id);
 
 CREATE TABLE IF NOT EXISTS share_links (
   id INTEGER PRIMARY KEY,

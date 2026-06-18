@@ -1,4 +1,4 @@
-export type ItemKind = "all" | "file" | "link" | "note";
+export type ItemKind = "all" | "file" | "directory" | "link" | "note";
 
 export interface VaultItem {
   id: number;
@@ -8,6 +8,8 @@ export interface VaultItem {
   note: string | null;
   tags: string | null;
   original_filename: string | null;
+  parent_id: number | null;
+  relative_path: string | null;
   mime_type: string | null;
   size_bytes: number | null;
   created_at: string;
@@ -18,6 +20,8 @@ export interface ShareLink {
   id: number;
   token: string;
   item_id: number;
+  title: string;
+  root_kind: Exclude<ItemKind, "all">;
   share_url: string;
   download_count: number;
   file_count: number;
@@ -34,6 +38,7 @@ export interface ShareFile {
   item_id: number;
   title: string;
   filename: string;
+  relative_path: string;
   size_bytes: number;
   mime_type: string | null;
   uploaded_at: string;
@@ -43,6 +48,8 @@ export interface ShareFile {
 
 export interface PublicShare {
   token: string;
+  title: string;
+  root_kind: Exclude<ItemKind, "all">;
   file_count: number;
   total_size_bytes: number;
   zip_size_bytes: number | null;

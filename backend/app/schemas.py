@@ -39,6 +39,8 @@ class ItemOut(UtcDateTimeModel):
     note: str | None = None
     tags: str | None = None
     original_filename: str | None = None
+    parent_id: int | None = None
+    relative_path: str | None = None
     mime_type: str | None = None
     size_bytes: int | None = None
     created_at: datetime
@@ -69,6 +71,7 @@ class ShareFileOut(UtcDateTimeModel):
     item_id: int
     title: str
     filename: str
+    relative_path: str
     size_bytes: int
     mime_type: str | None = None
     uploaded_at: datetime
@@ -80,6 +83,8 @@ class ShareOut(UtcDateTimeModel):
     id: int
     token: str
     item_id: int
+    title: str
+    root_kind: str
     share_url: str
     download_count: int
     file_count: int
@@ -93,6 +98,8 @@ class ShareOut(UtcDateTimeModel):
 
 class PublicShareOut(UtcDateTimeModel):
     token: str
+    title: str
+    root_kind: str
     file_count: int
     total_size_bytes: int
     zip_size_bytes: int | None = None

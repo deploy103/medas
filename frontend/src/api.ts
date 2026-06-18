@@ -69,9 +69,26 @@ export function createItem(
   formData: FormData,
   onProgress?: (percent: number) => void
 ): Promise<VaultItem> {
+  return uploadForm<VaultItem>(token, "/api/items", formData, onProgress);
+}
+
+export function createItemsBatch(
+  token: string,
+  formData: FormData,
+  onProgress?: (percent: number) => void
+): Promise<VaultItem[]> {
+  return uploadForm<VaultItem[]>(token, "/api/items/batch", formData, onProgress);
+}
+
+function uploadForm<T>(
+  token: string,
+  path: string,
+  formData: FormData,
+  onProgress?: (percent: number) => void
+): Promise<T> {
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
-    request.open("POST", `${API_BASE}/api/items`);
+    request.open("POST", `${API_BASE}${path}`);
     request.setRequestHeader("Authorization", `Bearer ${token}`);
 
     request.upload.onprogress = (event) => {
@@ -83,7 +100,7 @@ export function createItem(
     request.onload = () => {
       if (request.status >= 200 && request.status < 300) {
         onProgress?.(100);
-        resolve(JSON.parse(request.responseText) as VaultItem);
+        resolve(JSON.parse(request.responseText) as T);
         return;
       }
       try {

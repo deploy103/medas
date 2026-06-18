@@ -7,6 +7,8 @@ import {
   Eye,
   FileArchive,
   Files,
+  Folder,
+  FolderPlus,
   HardDrive,
   Link as LinkIcon,
   LockKeyhole,
@@ -19,11 +21,12 @@ import {
   UploadCloud,
   X
 } from "lucide-react";
-import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   createItem,
+  createItemsBatch,
   createShare,
   deleteItem,
   deleteShare,
@@ -41,17 +44,19 @@ const TOKEN_KEY = "personal-vault-token";
 const USERNAME_KEY = "personal-vault-username";
 const LAST_ACTIVITY_KEY = "personal-vault-last-activity";
 const IDLE_TIMEOUT_MS = 60 * 60 * 1000;
-const IDLE_SESSION_MESSAGE = "1시간 동안 활동이 없어 자동 로그아웃되었습니다.";
 
 function removeStoredSession() {
+  sessionStorage.removeItem(TOKEN_KEY);
+  sessionStorage.removeItem(USERNAME_KEY);
+  sessionStorage.removeItem(LAST_ACTIVITY_KEY);
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(USERNAME_KEY);
   localStorage.removeItem(LAST_ACTIVITY_KEY);
 }
 
 function hasStoredSessionTimedOut(): boolean {
-  const storedToken = localStorage.getItem(TOKEN_KEY);
-  const lastActivity = Number(localStorage.getItem(LAST_ACTIVITY_KEY));
+  const storedToken = sessionStorage.getItem(TOKEN_KEY);
+  const lastActivity = Number(sessionStorage.getItem(LAST_ACTIVITY_KEY));
   return Boolean(
     storedToken &&
       Number.isFinite(lastActivity) &&
@@ -63,12 +68,24 @@ function hasStoredSessionTimedOut(): boolean {
 const filters: Array<{ value: ItemKind; label: string }> = [
   { value: "all", label: "전체" },
   { value: "file", label: "파일" },
+  { value: "directory", label: "디렉터리" },
   { value: "link", label: "링크" },
   { value: "note", label: "메모" }
 ];
 
 type SortKey = "newest" | "oldest" | "largest" | "smallest" | "title";
 type AppTab = "items" | "shares";
+type UploadMode = "individual" | "directory";
+type ShareableItem = VaultItem & { kind: "file" | "directory" };
+type UploadDraftFile = {
+  id: string;
+  file: File;
+  path: string;
+};
+type CreatePayload = {
+  kind: Exclude<ItemKind, "all">;
+  formData: FormData;
+};
 
 const sortOptions: Array<{ value: SortKey; label: string }> = [
   { value: "newest", label: "최신순" },
@@ -147,14 +164,28 @@ function sortItems(items: VaultItem[], sortKey: SortKey): VaultItem[] {
 
 function kindIcon(kind: VaultItem["kind"]) {
   if (kind === "file") return <FileArchive size={18} />;
+  if (kind === "directory") return <Folder size={18} />;
   if (kind === "link") return <LinkIcon size={18} />;
   return <StickyNote size={18} />;
 }
 
 function kindLabel(kind: VaultItem["kind"]): string {
   if (kind === "file") return "파일";
+  if (kind === "directory") return "디렉터리";
   if (kind === "link") return "링크";
   return "메모";
+}
+
+function isShareableItem(item: VaultItem): item is ShareableItem {
+  return item.kind === "file" || item.kind === "directory";
+}
+
+function displayFilePath(file: { filename: string; relative_path?: string | null }): string {
+  return file.relative_path || file.filename;
+}
+
+function uploadEntryPath(file: File): string {
+  return (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
 }
 
 function Modal({
@@ -195,8 +226,8 @@ function LoginScreen({
     mutationFn: (payload: { username: string; password: string }) =>
       login(payload.username, payload.password),
     onSuccess: (result) => {
-      localStorage.setItem(TOKEN_KEY, result.access_token);
-      localStorage.setItem(USERNAME_KEY, result.username);
+      sessionStorage.setItem(TOKEN_KEY, result.access_token);
+      sessionStorage.setItem(USERNAME_KEY, result.username);
       onLogin(result.access_token, result.username);
     },
     onError: (err) => setError(err instanceof Error ? err.message : "로그인 실패")
@@ -275,11 +306,11 @@ function PublicShareScreen({ token }: { token: string }) {
         {share ? (
           <>
             <div className="share-file">
-              <span className="kind-badge file">
-                <Files size={18} />
-                파일 {share.file_count}개
+              <span className={`kind-badge ${share.root_kind === "directory" ? "directory" : "file"}`}>
+                {share.root_kind === "directory" ? <Folder size={18} /> : <Files size={18} />}
+                {share.root_kind === "directory" ? "디렉터리" : `파일 ${share.file_count}개`}
               </span>
-              <h2>{share.file_count === 1 ? share.files[0]?.filename : `공유 파일 ${share.file_count}개`}</h2>
+              <h2>{share.root_kind === "directory" ? share.title : share.file_count === 1 ? share.files[0]?.filename : `공유 파일 ${share.file_count}개`}</h2>
               <p>총 {formatBytes(share.total_size_bytes)} · 압축 {formatBytes(share.zip_size_bytes)}</p>
             </div>
 
@@ -305,7 +336,7 @@ function PublicShareScreen({ token }: { token: string }) {
               {share.files.map((file) => (
                 <article className="public-file-row" key={file.id}>
                   <div>
-                    <h3>{file.filename}</h3>
+                    <h3>{displayFilePath(file)}</h3>
                     <p>
                       {formatBytes(file.size_bytes)} · 업로드 {formatDateTime(file.uploaded_at)}
                     </p>
@@ -334,15 +365,17 @@ function VaultApp() {
       removeStoredSession();
       return "";
     }
-    return localStorage.getItem(TOKEN_KEY) ?? "";
+    return sessionStorage.getItem(TOKEN_KEY) ?? "";
   });
-  const [username, setUsername] = useState(() => (initialIdleExpired ? "" : localStorage.getItem(USERNAME_KEY) ?? ""));
+  const [username, setUsername] = useState(() => (initialIdleExpired ? "" : sessionStorage.getItem(USERNAME_KEY) ?? ""));
   const [activeTab, setActiveTab] = useState<AppTab>("items");
   const [filter, setFilter] = useState<ItemKind>("all");
   const [query, setQuery] = useState("");
   const [draftKind, setDraftKind] = useState<Exclude<ItemKind, "all">>("file");
+  const [uploadMode, setUploadMode] = useState<UploadMode>("individual");
+  const [uploadFiles, setUploadFiles] = useState<UploadDraftFile[]>([]);
   const [sortKey, setSortKey] = useState<SortKey>("newest");
-  const [selectedFileIds, setSelectedFileIds] = useState<number[]>([]);
+  const [selectedItemIds, setSelectedItemIds] = useState<number[]>([]);
   const [shareDraftIds, setShareDraftIds] = useState<number[]>([]);
   const [shareExpiresHours, setShareExpiresHours] = useState(24);
   const [shareResult, setShareResult] = useState<ShareLink | null>(null);
@@ -353,7 +386,7 @@ function VaultApp() {
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [uploadComplete, setUploadComplete] = useState(false);
   const [notice, setNotice] = useState("");
-  const [authMessage, setAuthMessage] = useState(initialIdleExpired ? IDLE_SESSION_MESSAGE : "");
+  const [authMessage, setAuthMessage] = useState("");
 
   const itemsQuery = useQuery({
     queryKey: ["items", filter, query],
@@ -376,6 +409,12 @@ function VaultApp() {
   const hasAuthQueryError = [itemsQuery.error, storageQuery.error, sharesQuery.error].some(isAuthError);
 
   useEffect(() => {
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(USERNAME_KEY);
+    localStorage.removeItem(LAST_ACTIVITY_KEY);
+  }, []);
+
+  useEffect(() => {
     if (hasAuthQueryError) {
       handleAuthExpired();
     }
@@ -388,7 +427,7 @@ function VaultApp() {
     const activityEvents = ["click", "keydown", "mousemove", "pointerdown", "scroll", "touchstart", "input"];
 
     function readLastActivity(): number {
-      const timestamp = Number(localStorage.getItem(LAST_ACTIVITY_KEY));
+      const timestamp = Number(sessionStorage.getItem(LAST_ACTIVITY_KEY));
       return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : Date.now();
     }
 
@@ -415,16 +454,16 @@ function VaultApp() {
       const now = Date.now();
       if (now - lastActivityWriteRef.current < 1000) return;
       lastActivityWriteRef.current = now;
-      localStorage.setItem(LAST_ACTIVITY_KEY, String(now));
+      sessionStorage.setItem(LAST_ACTIVITY_KEY, String(now));
       scheduleIdleCheck();
     }
 
-    const savedActivity = Number(localStorage.getItem(LAST_ACTIVITY_KEY));
+    const savedActivity = Number(sessionStorage.getItem(LAST_ACTIVITY_KEY));
     if (Number.isFinite(savedActivity) && savedActivity > 0) {
       lastActivityWriteRef.current = savedActivity;
     } else {
       lastActivityWriteRef.current = Date.now();
-      localStorage.setItem(LAST_ACTIVITY_KEY, String(lastActivityWriteRef.current));
+      sessionStorage.setItem(LAST_ACTIVITY_KEY, String(lastActivityWriteRef.current));
     }
 
     if (expireIfIdle()) return;
@@ -440,44 +479,50 @@ function VaultApp() {
   const rawItems = itemsQuery.data ?? [];
   const items = useMemo(() => sortItems(rawItems, sortKey), [rawItems, sortKey]);
   const fileItems = rawItems.filter((item) => item.kind === "file");
-  const selectedFiles = useMemo(() => {
+  const directoryItems = rawItems.filter((item) => item.kind === "directory");
+  const selectedItems = useMemo(() => {
     const byId = new Map(rawItems.map((item) => [item.id, item]));
-    return selectedFileIds
+    return selectedItemIds
       .map((id) => byId.get(id))
-      .filter((item): item is VaultItem => Boolean(item && item.kind === "file"));
-  }, [rawItems, selectedFileIds]);
-  const shareDraftFiles = useMemo(() => {
+      .filter((item): item is ShareableItem => Boolean(item && isShareableItem(item)));
+  }, [rawItems, selectedItemIds]);
+  const shareDraftItems = useMemo(() => {
     const byId = new Map(rawItems.map((item) => [item.id, item]));
     return shareDraftIds
       .map((id) => byId.get(id))
-      .filter((item): item is VaultItem => Boolean(item && item.kind === "file"));
+      .filter((item): item is ShareableItem => Boolean(item && isShareableItem(item)));
   }, [rawItems, shareDraftIds]);
-  const selectedFileIdSet = useMemo(() => new Set(selectedFileIds), [selectedFileIds]);
-  const visibleFiles = items.filter((item) => item.kind === "file");
+  const selectedItemIdSet = useMemo(() => new Set(selectedItemIds), [selectedItemIds]);
+  const visibleShareItems = items.filter(isShareableItem);
   const allVisibleSelected =
-    visibleFiles.length > 0 && visibleFiles.every((item) => selectedFileIdSet.has(item.id));
+    visibleShareItems.length > 0 && visibleShareItems.every((item) => selectedItemIdSet.has(item.id));
   const storage: StorageStats | undefined = storageQuery.data;
   const shares = sharesQuery.data ?? [];
   const fileCount = fileItems.length;
+  const directoryCount = directoryItems.length;
   const linkCount = rawItems.filter((item) => item.kind === "link").length;
   const noteCount = rawItems.filter((item) => item.kind === "note").length;
-  const selectedTotalBytes = selectedFiles.reduce((total, item) => total + (item.size_bytes ?? 0), 0);
-  const shareDraftTotalBytes = shareDraftFiles.reduce((total, item) => total + (item.size_bytes ?? 0), 0);
+  const selectedTotalBytes = selectedItems.reduce((total, item) => total + (item.size_bytes ?? 0), 0);
+  const shareDraftTotalBytes = shareDraftItems.reduce((total, item) => total + (item.size_bytes ?? 0), 0);
+  const uploadTotalBytes = uploadFiles.reduce((total, entry) => total + entry.file.size, 0);
   const usedPercent =
     storage && storage.quota_bytes > 0 ? Math.min(100, Math.round((storage.used_bytes / storage.quota_bytes) * 100)) : 0;
 
-  const createMutation = useMutation({
-    mutationFn: (formData: FormData) =>
-      createItem(token, formData, formData.get("kind") === "file" ? setUploadProgress : undefined),
-    onMutate: (formData) => {
-      setUploadProgress(formData.get("kind") === "file" ? 0 : null);
+  const createMutation = useMutation<VaultItem | VaultItem[], Error, CreatePayload>({
+    mutationFn: ({ kind, formData }) =>
+      kind === "file"
+        ? createItemsBatch(token, formData, setUploadProgress)
+        : createItem(token, formData),
+    onMutate: ({ kind }) => {
+      setUploadProgress(kind === "file" ? 0 : null);
       setUploadComplete(false);
     },
-    onSuccess: (_item, formData) => {
+    onSuccess: (_item, payload) => {
       formRef.current?.reset();
-      if (formData.get("kind") === "file") {
+      if (payload.kind === "file") {
         setUploadProgress(100);
         setUploadComplete(true);
+        setUploadFiles([]);
       } else {
         setIsUploadOpen(false);
         setUploadProgress(null);
@@ -527,7 +572,7 @@ function VaultApp() {
     },
     onSuccess: async (share) => {
       setShareResult(share);
-      setSelectedFileIds([]);
+      setSelectedItemIds([]);
       queryClient.invalidateQueries({ queryKey: ["shares"] });
       try {
         await navigator.clipboard.writeText(share.share_url);
@@ -567,13 +612,15 @@ function VaultApp() {
     queryClient.removeQueries({ queryKey: ["shares"] });
     setToken("");
     setUsername("");
-    setSelectedFileIds([]);
+    setSelectedItemIds([]);
     setShareDraftIds([]);
     setShareResult(null);
     setShareError("");
     setDetailsShare(null);
     setIsUploadOpen(false);
     setIsShareOpen(false);
+    setUploadFiles([]);
+    setUploadMode("individual");
     setUploadProgress(null);
     setUploadComplete(false);
     setNotice("");
@@ -585,12 +632,12 @@ function VaultApp() {
   }
 
   function handleIdleExpired() {
-    clearSession(IDLE_SESSION_MESSAGE);
+    clearSession();
   }
 
   function handleLogin(nextToken: string, nextUsername: string) {
     const now = Date.now();
-    localStorage.setItem(LAST_ACTIVITY_KEY, String(now));
+    sessionStorage.setItem(LAST_ACTIVITY_KEY, String(now));
     lastActivityWriteRef.current = now;
     setAuthMessage("");
     setToken(nextToken);
@@ -604,6 +651,8 @@ function VaultApp() {
   function openUploadModal() {
     setUploadProgress(null);
     setUploadComplete(false);
+    setUploadFiles([]);
+    setUploadMode("individual");
     setIsUploadOpen(true);
   }
 
@@ -611,6 +660,7 @@ function VaultApp() {
     setIsUploadOpen(false);
     setUploadProgress(null);
     setUploadComplete(false);
+    setUploadFiles([]);
   }
 
   function handleCreate(event: FormEvent<HTMLFormElement>) {
@@ -618,10 +668,48 @@ function VaultApp() {
     setNotice("");
     const formData = new FormData(event.currentTarget);
     formData.set("kind", draftKind);
-    if (draftKind !== "file") {
+    if (draftKind === "file") {
+      if (uploadFiles.length === 0) {
+        setNotice("업로드할 파일을 선택해 주세요.");
+        return;
+      }
+      formData.delete("kind");
       formData.delete("file");
+      formData.set("upload_mode", uploadMode);
+      uploadFiles.forEach((entry) => {
+        formData.append("files", entry.file, entry.file.name);
+        formData.append("paths", uploadMode === "directory" ? entry.path : entry.file.name);
+      });
     }
-    createMutation.mutate(formData);
+    createMutation.mutate({ kind: draftKind, formData });
+  }
+
+  function handleUploadFilesSelected(event: ChangeEvent<HTMLInputElement>) {
+    const selected = Array.from(event.currentTarget.files ?? []);
+    if (selected.length === 0) return;
+    setUploadComplete(false);
+    setUploadProgress(null);
+    setUploadFiles((current) => {
+      const seen = new Set(current.map((entry) => `${entry.path}:${entry.file.size}`));
+      const next = [...current];
+      selected.forEach((file) => {
+        const path = uploadEntryPath(file);
+        const key = `${path}:${file.size}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        next.push({
+          id: `${path}:${file.size}:${file.lastModified}:${crypto.randomUUID()}`,
+          file,
+          path
+        });
+      });
+      return next;
+    });
+    event.currentTarget.value = "";
+  }
+
+  function removeUploadFile(id: string) {
+    setUploadFiles((current) => current.filter((entry) => entry.id !== id));
   }
 
   async function handleDownload(item: VaultItem) {
@@ -645,16 +733,16 @@ function VaultApp() {
     }
   }
 
-  function toggleFileSelection(id: number, checked: boolean) {
-    setSelectedFileIds((current) => {
+  function toggleItemSelection(id: number, checked: boolean) {
+    setSelectedItemIds((current) => {
       if (checked) return current.includes(id) ? current : [...current, id];
       return current.filter((entry) => entry !== id);
     });
   }
 
-  function toggleVisibleFiles() {
-    const visibleIds = visibleFiles.map((item) => item.id);
-    setSelectedFileIds((current) => {
+  function toggleVisibleItems() {
+    const visibleIds = visibleShareItems.map((item) => item.id);
+    setSelectedItemIds((current) => {
       if (allVisibleSelected) {
         return current.filter((id) => !visibleIds.includes(id));
       }
@@ -665,7 +753,7 @@ function VaultApp() {
   }
 
   function openShareModal(files: VaultItem[]) {
-    const ids = files.filter((item) => item.kind === "file").map((item) => item.id);
+    const ids = files.filter(isShareableItem).map((item) => item.id);
     if (ids.length === 0) return;
     setShareDraftIds(ids);
     setShareResult(null);
@@ -692,6 +780,7 @@ function VaultApp() {
         </div>
         <div className="top-stats">
           <span>파일 {fileCount}</span>
+          <span>디렉터리 {directoryCount}</span>
           <span>링크 {linkCount}</span>
           <span>메모 {noteCount}</span>
           {storage ? <span>남은 용량 {formatBytes(storage.remaining_bytes)}</span> : null}
@@ -714,8 +803,8 @@ function VaultApp() {
           </button>
           <button
             className="secondary-button full-button"
-            disabled={selectedFiles.length === 0}
-            onClick={() => openShareModal(selectedFiles)}
+            disabled={selectedItems.length === 0}
+            onClick={() => openShareModal(selectedItems)}
             type="button"
           >
             <Share2 size={18} />
@@ -723,8 +812,8 @@ function VaultApp() {
           </button>
 
           <div className="selection-box">
-            <span>선택한 파일</span>
-            <strong>{selectedFiles.length}개</strong>
+            <span>선택한 자료</span>
+            <strong>{selectedItems.length}개</strong>
             <p>{formatBytes(selectedTotalBytes)}</p>
           </div>
 
@@ -786,11 +875,11 @@ function VaultApp() {
                 </select>
               </label>
               <div className="bulk-actions">
-                <button className="secondary-button" disabled={visibleFiles.length === 0} onClick={toggleVisibleFiles} type="button">
+                <button className="secondary-button" disabled={visibleShareItems.length === 0} onClick={toggleVisibleItems} type="button">
                   <Check size={16} />
-                  {allVisibleSelected ? "선택 해제" : "표시 파일 선택"}
+                  {allVisibleSelected ? "선택 해제" : "표시 자료 선택"}
                 </button>
-                <button className="primary-button" disabled={selectedFiles.length === 0} onClick={() => openShareModal(selectedFiles)} type="button">
+                <button className="primary-button" disabled={selectedItems.length === 0} onClick={() => openShareModal(selectedItems)} type="button">
                   <Share2 size={16} />
                   공유
                 </button>
@@ -819,12 +908,12 @@ function VaultApp() {
               ) : null}
               {items.map((item) => (
                 <article className="item-row" key={item.id}>
-                  {item.kind === "file" ? (
+                  {isShareableItem(item) ? (
                     <label className="item-select" title="선택">
                       <input
                         type="checkbox"
-                        checked={selectedFileIdSet.has(item.id)}
-                        onChange={(event) => toggleFileSelection(item.id, event.target.checked)}
+                        checked={selectedItemIdSet.has(item.id)}
+                        onChange={(event) => toggleItemSelection(item.id, event.target.checked)}
                       />
                     </label>
                   ) : (
@@ -843,7 +932,10 @@ function VaultApp() {
                         </a>
                       ) : null}
                       {item.kind === "file" ? (
-                        <p>{item.original_filename} · {formatBytes(item.size_bytes)}</p>
+                        <p>{item.original_filename ?? item.title} · {formatBytes(item.size_bytes)}</p>
+                      ) : null}
+                      {item.kind === "directory" ? (
+                        <p>{formatBytes(item.size_bytes)} · 하위 파일 포함</p>
                       ) : null}
                       <p className="item-date">
                         <Clock3 size={13} />
@@ -869,6 +961,11 @@ function VaultApp() {
                         </button>
                       </>
                     ) : null}
+                    {item.kind === "directory" ? (
+                      <button className="icon-button" onClick={() => openShareModal([item])} title="디렉터리 공유">
+                        <Share2 size={17} />
+                      </button>
+                    ) : null}
                     <button className="icon-button danger" onClick={() => deleteMutation.mutate(item.id)} title="삭제">
                       <Trash2 size={17} />
                     </button>
@@ -885,12 +982,12 @@ function VaultApp() {
               {shares.map((share) => (
                 <article className="share-row" key={share.id}>
                   <div className="share-row-main">
-                    <span className="kind-badge file">
-                      <Share2 size={17} />
-                      공유
+                    <span className={`kind-badge ${share.root_kind === "directory" ? "directory" : "file"}`}>
+                      {share.root_kind === "directory" ? <Folder size={17} /> : <Share2 size={17} />}
+                      {share.root_kind === "directory" ? "디렉터리" : "공유"}
                     </span>
                     <div>
-                      <h3>{share.file_count === 1 ? share.files[0]?.filename : `파일 ${share.file_count}개`}</h3>
+                      <h3>{share.root_kind === "directory" ? share.title : share.file_count === 1 ? share.files[0]?.filename : `파일 ${share.file_count}개`}</h3>
                       <p>
                         {formatBytes(share.total_size_bytes)} · 만료 {formatRemaining(share.expires_at)}
                       </p>
@@ -922,7 +1019,12 @@ function VaultApp() {
               <button
                 key={kind}
                 className={draftKind === kind ? "active" : ""}
-                onClick={() => setDraftKind(kind)}
+                onClick={() => {
+                  setDraftKind(kind);
+                  setUploadComplete(false);
+                  setUploadProgress(null);
+                  if (kind !== "file") setUploadFiles([]);
+                }}
                 type="button"
               >
                 {kindIcon(kind)}
@@ -932,18 +1034,69 @@ function VaultApp() {
           </div>
 
           <form ref={formRef} className="item-form" onSubmit={handleCreate}>
-            <input name="title" placeholder="제목" required />
+            <input
+              name="title"
+              placeholder={draftKind === "file" ? (uploadMode === "directory" ? "디렉터리 이름" : "제목") : "제목"}
+              required={draftKind !== "file"}
+            />
             {draftKind === "file" ? (
-              <label className="file-drop">
-                <UploadCloud size={24} />
-                <span>파일 선택</span>
-                <input name="file" type="file" required />
-              </label>
+              <>
+                <div className="upload-mode" role="tablist" aria-label="업로드 방식">
+                  <button className={uploadMode === "individual" ? "active" : ""} onClick={() => setUploadMode("individual")} type="button">
+                    <Files size={16} />
+                    개별 업로드
+                  </button>
+                  <button className={uploadMode === "directory" ? "active" : ""} onClick={() => setUploadMode("directory")} type="button">
+                    <Folder size={16} />
+                    디렉터리
+                  </button>
+                </div>
+                <div className="upload-pickers">
+                  {uploadMode === "directory" ? (
+                    <label className="file-drop">
+                      <FolderPlus size={24} />
+                      <span>폴더 추가</span>
+                      <input
+                        type="file"
+                        multiple
+                        onChange={handleUploadFilesSelected}
+                        {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
+                      />
+                    </label>
+                  ) : null}
+                  <label className="file-drop">
+                    <UploadCloud size={24} />
+                    <span>{uploadMode === "directory" ? "파일 추가" : "파일 추가"}</span>
+                    <input type="file" multiple onChange={handleUploadFilesSelected} />
+                  </label>
+                </div>
+                {uploadFiles.length > 0 ? (
+                  <div className="upload-list">
+                    <div className="file-list-head">
+                      <strong>현재 업로드 목록</strong>
+                      <span>
+                        {uploadFiles.length}개 · {formatBytes(uploadTotalBytes)}
+                      </span>
+                    </div>
+                    <div className="selected-file-list">
+                      {uploadFiles.map((entry) => (
+                        <div className="upload-list-row" key={entry.id}>
+                          <span>{uploadMode === "directory" ? entry.path : entry.file.name}</span>
+                          <strong>{formatBytes(entry.file.size)}</strong>
+                          <button className="icon-button" onClick={() => removeUploadFile(entry.id)} title="목록에서 제거" type="button">
+                            <X size={16} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </>
             ) : null}
             {draftKind === "link" ? <input name="url" placeholder="https://..." required /> : null}
             <textarea name="note" placeholder="메모" rows={draftKind === "note" ? 9 : 5} />
             <input name="tags" placeholder="태그: 문서, 학교, 서버" />
-            <button className="primary-button" disabled={createMutation.isPending || uploadComplete}>
+            <button className="primary-button" disabled={createMutation.isPending || uploadComplete || (draftKind === "file" && uploadFiles.length === 0)}>
               {uploadComplete ? <Check size={18} /> : <Plus size={18} />}
               {uploadComplete ? "저장 완료" : createMutation.isPending ? "저장 중" : "저장"}
             </button>
@@ -999,13 +1152,13 @@ function VaultApp() {
           ) : (
             <>
               <div className="share-summary-box">
-                <strong>{shareDraftFiles.length}개 파일</strong>
+                <strong>{shareDraftItems.length}개 자료</strong>
                 <span>{formatBytes(shareDraftTotalBytes)}</span>
               </div>
               <div className="selected-file-list">
-                {shareDraftFiles.map((item) => (
+                {shareDraftItems.map((item) => (
                   <div key={item.id}>
-                    <span>{item.original_filename}</span>
+                    <span>{item.kind === "directory" ? item.title : item.original_filename ?? item.title}</span>
                     <strong>{formatBytes(item.size_bytes)}</strong>
                   </div>
                 ))}
@@ -1025,7 +1178,7 @@ function VaultApp() {
                 <button className="secondary-button" onClick={() => setIsShareOpen(false)} type="button">
                   취소
                 </button>
-                <button className="primary-button" disabled={shareMutation.isPending || shareDraftFiles.length === 0} onClick={() => shareMutation.mutate()} type="button">
+                <button className="primary-button" disabled={shareMutation.isPending || shareDraftItems.length === 0} onClick={() => shareMutation.mutate()} type="button">
                   <Share2 size={16} />
                   {shareMutation.isPending ? "압축 중" : "공유하기"}
                 </button>
@@ -1062,7 +1215,7 @@ function VaultApp() {
             <div className="selected-file-list">
               {detailsShare.files.map((file) => (
                 <div key={file.id}>
-                  <span>{file.filename}</span>
+                  <span>{displayFilePath(file)}</span>
                   <strong>{formatBytes(file.size_bytes)}</strong>
                 </div>
               ))}
